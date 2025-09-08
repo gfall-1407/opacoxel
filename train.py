@@ -2,7 +2,7 @@ import config
 import torch
 from tqdm import tqdm
 from scene import Scene
-from helpers import prepare
+from utils.pre_utils import prepare
 
 try:
     from torch.utils.tensorboard import SummaryWriter

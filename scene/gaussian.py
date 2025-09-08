@@ -6,8 +6,8 @@ from typing import NamedTuple
 from simple_knn._C import distCUDA2
 from utils.sh_utils import RGB_to_sh
 from utils.transform_utils import build_covariance_from_scaling_rotation, quat_to_rot_mat_torch
-from helpers.data_reader import BasicPointCloud
-from helpers.data_saver import save_gaussians_as_ply
+from helpers import BasicPointCloud
+from helpers import save_gaussians_as_ply
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
