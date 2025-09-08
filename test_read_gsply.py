@@ -50,6 +50,22 @@ def read_gd_ply(path, max_sh_degree):
                        features_dc=features_dc,
                        features_rest=features_rest,
                        opacities=opacities)
-    
+
+def compute_bbox(positions: np.array):
+    x_np = positions[:,0]
+    y_np = positions[:,1]
+    z_np = positions[:,2]
+    x_min, x_max = x_np.min(), x_np.max()
+    y_min, y_max = y_np.min(), y_np.max()
+    z_min, z_max = z_np.min(), z_np.max()
+    x_len = x_max - x_min
+    y_len = y_max - y_min
+    z_len = z_max - z_min
+    radius = max(max(x_len, y_len), z_len)
+    bbox = [x_min, x_max, y_min, y_max, z_min, z_max, radius*1.1]
+    return bbox
+
 if __name__ == "__main__":
-    gaussians = read_gd_ply("opacoxel/PLYs/point_cloud_1000.ply", 3)
+    gaussians = read_gd_ply("PLYs/point_cloud_1000.ply", 3)
+    bbox = compute_bbox(gaussians.positions)
+    opacoxels = Opacoxels()

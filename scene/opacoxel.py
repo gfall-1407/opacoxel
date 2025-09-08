@@ -6,7 +6,7 @@ from typing import Tuple, Optional
 class Opacoxels:  
     def __init__(self,   
                  bounds: Tuple[float, float, float, float, float, float] = (-1, 1, -1, 1, -1, 1),  
-                 resolution: Tuple[int, int, int] = (64, 64, 64),  
+                 resolution: Tuple[int, int, int] = (256, 256, 256),  
                  device: str = "cuda"):  
         """  
         初始化体素化opacity field  
