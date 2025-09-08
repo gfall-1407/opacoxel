@@ -1,5 +1,15 @@
 import numpy as np
-from plyfile import PlyData, PlyElement
+from typing import NamedTuple
+from plyfile import PlyData
+from scene import Opacoxels
+
+class GaussianPLY(NamedTuple):
+    positions : np.array
+    scales : np.array
+    rotations : np.array 
+    features_dc : np.array
+    features_rest : np.array
+    opacities : np.array
 
 def read_gd_ply(path, max_sh_degree):
     plydata = PlyData.read(path)
@@ -12,15 +22,15 @@ def read_gd_ply(path, max_sh_degree):
     features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
     features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
     features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-    
+
     extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
     extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
     assert len(extra_f_names)==3*(max_sh_degree + 1) ** 2 - 3
-    features_extra = np.zeros((positions.shape[0], len(extra_f_names)))
+    features_rest = np.zeros((positions.shape[0], len(extra_f_names)))
     for idx, attr_name in enumerate(extra_f_names):
-        features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        features_rest[:, idx] = np.asarray(plydata.elements[0][attr_name])
     # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-    features_extra = features_extra.reshape((features_extra.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
+    features_rest = features_rest.reshape((features_rest.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
     
     scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
     scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
@@ -34,5 +44,12 @@ def read_gd_ply(path, max_sh_degree):
     for idx, attr_name in enumerate(rot_names):
         rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
     
+    return GaussianPLY(positions=positions,
+                       scales=scales,
+                       rotations=rots,
+                       features_dc=features_dc,
+                       features_rest=features_rest,
+                       opacities=opacities)
+    
 if __name__ == "__main__":
-    read_gd_ply("opacoxel/Test/point_cloud.ply", 3)
+    gaussians = read_gd_ply("opacoxel/PLYs/point_cloud_1000.ply", 3)

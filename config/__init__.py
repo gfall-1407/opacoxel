@@ -36,7 +36,7 @@ OptimizationConfigs = namedtuple('OptimizationConfigs',
                                   'densification_interval',
                                   'opacity_reset_interval'])
 
-ocs = OptimizationConfigs(iterations=30_000,
+ocs = OptimizationConfigs(iterations=3000,
                           sh_degree=3,
                           position_lr_init=0.00016,
                           position_lr_final=0.0000016,

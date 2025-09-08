@@ -5,6 +5,7 @@ import random
 import torch
 from random import randint
 from scene.gaussian import Gaussians
+from scene.opacoxel import Opacoxels
 from scene.image import rescale_image_infos
 from helpers import read_data_from_path
 from utils.loss_utils import l1_loss, ssim
