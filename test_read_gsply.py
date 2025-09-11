@@ -74,33 +74,11 @@ def compute_bbox(positions: np.array):
     return bbox
 
 if __name__ == "__main__":
-    gaussians = read_gs_ply("PLYs/point_cloud_1000.ply", 3)
+    gaussians = read_gs_ply("PLYs/point_cloud_30000.ply", 3)
     # 构造 PLY 顶点与面
-    save_dir = "PLYs"
+    save_dir = "PLYs/output"
     vertex_dtype = [("x", "f4"), ("y", "f4"), ("z", "f4"), ("nx", "f4"), ("ny", "f4"), ("nz", "f4")]
     verts = gaussians.positions
-    norms = np.zeros_like(verts)
-    faces = np.zeros((0, 3), dtype=np.int32)
-    iso = 0.1
-    mesh_path = os.path.join(save_dir, "points_from_gs_ply.ply")
-    save_dir = "PLYs/Output"
-    os.makedirs(save_dir, exist_ok=True)
-    vertex_data = np.empty(verts.shape[0], dtype=vertex_dtype)
-    vertex_data["x"] = verts[:, 0]
-    vertex_data["y"] = verts[:, 1]
-    vertex_data["z"] = verts[:, 2]
-    vertex_data["nx"] = norms[:, 0]
-    vertex_data["ny"] = norms[:, 1]
-    vertex_data["nz"] = norms[:, 2]
-
-    face_dtype = [("vertex_indices", "i4", (3,))]
-    face_data = np.array([(faces[i].astype(np.int32),) for i in range(faces.shape[0])], dtype=face_dtype)
-
-    el_verts = PlyElement.describe(vertex_data, "vertex")
-    el_faces = PlyElement.describe(face_data, "face")
-    PlyData([el_verts, el_faces], text=True).write(mesh_path)
-    print(f"Saved mesh to {mesh_path} with {verts.shape[0]} vertices and {faces.shape[0]} faces (iso={iso}).")
-
     # 将读取的 Gaussians 保存为点云：xyz=positions，normal=0，rgb=sh_to_RGB(features_dc)
     pc_save_path = os.path.join(save_dir, "points_from_gs_ply.ply")
     num_pts = gaussians.positions.shape[0]
@@ -130,3 +108,30 @@ if __name__ == "__main__":
     vertex_data_pc["red"], vertex_data_pc["green"], vertex_data_pc["blue"] = r, g, b
     PlyData([PlyElement.describe(vertex_data_pc, "vertex")], text=True).write(pc_save_path)
     print(f"Saved point cloud to {pc_save_path} with {num_pts} points.")
+
+    # 使用点云包围盒初始化体素边界，并设置体素分辨率
+    bbox = compute_bbox(gaussians.positions)
+    x_min, x_max, y_min, y_max, z_min, z_max, _ = bbox
+    bounds = (x_min, x_max, y_min, y_max, z_min, z_max)
+    resolution = (512, 512, 512)
+    opacoxels = Opacoxels(bounds=bounds, resolution=resolution, device="cuda" if torch.cuda.is_available() else "cpu")
+
+    # 快速方法：将点云体素化为占据体，再直接 Marching Cubes（更快）
+    print("Running fast voxel-based surface extraction from positions...")
+    # 使用更低分辨率加速（可按需调高），并将所有点 opacity 置 1
+    fast_res = (512, 512, 512)
+    opacoxels_fast = Opacoxels(bounds=bounds, resolution=fast_res, device="cpu")
+    #ones_opacity = torch.ones((gaussians.positions.shape[0], 1), device=opacoxels_fast.device, dtype=torch.float32)
+    #opacoxels_fast.update_from_points(torch.from_numpy(gaussians.positions).float().to(opacoxels_fast.device), ones_opacity)
+    fast_iso = 0.5
+    f_verts, f_faces, f_norms, _ = opacoxels_fast.extract_surface(iso_level=fast_iso)
+
+    #fast_mesh_path = os.path.join(save_dir, "fast_voxel_mesh.ply")
+    #f_vertex_dtype = [("x", "f4"), ("y", "f4"), ("z", "f4"), ("nx", "f4"), ("ny", "f4"), ("nz", "f4")]
+    #f_vertex_data = np.empty(f_verts.shape[0], dtype=f_vertex_dtype)
+    #f_vertex_data["x"], f_vertex_data["y"], f_vertex_data["z"] = f_verts[:, 0], f_verts[:, 1], f_verts[:, 2]
+    #f_vertex_data["nx"], f_vertex_data["ny"], f_vertex_data["nz"] = f_norms[:, 0], f_norms[:, 1], f_norms[:, 2]
+    #f_face_dtype = [("vertex_indices", "i4", (3,))]
+    #f_face_data = np.array([(f_faces[i].astype(np.int32),) for i in range(f_faces.shape[0])], dtype=f_face_dtype)
+    #PlyData([PlyElement.describe(f_vertex_data, "vertex"), PlyElement.describe(f_face_data, "face")], text=True).write(fast_mesh_path)
+    #print(f"Saved fast voxel mesh to {fast_mesh_path} with {f_verts.shape[0]} vertices and {f_faces.shape[0]} faces (iso={fast_iso}, res={fast_res}).")
