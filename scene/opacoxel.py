@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn  
 import numpy as np  
 from typing import Tuple, Optional  
+try:
+    from skimage import measure as sk_measure
+    _SKIMAGE_OK = True
+except Exception:
+    _SKIMAGE_OK = False
   
 class Opacoxels:  
     def __init__(self,   
@@ -84,15 +89,22 @@ class Opacoxels:
         Returns:  
             插值后的opacity值 [N]  
         """  
-        nx, ny, nz = self.resolution  
-          
-        # 获取整数和小数部分  
-        coords_floor = torch.floor(coords).long()  
-        coords_frac = coords - coords_floor.float()  
-          
-        # 边界检查  
-        coords_floor = torch.clamp(coords_floor, 0, torch.tensor([nx-1, ny-1, nz-1], device=self.device))  
-        coords_ceil = torch.clamp(coords_floor + 1, 0, torch.tensor([nx-1, ny-1, nz-1], device=self.device))  
+        nx, ny, nz = self.resolution
+
+        # 先对坐标逐维裁剪，避免后续 ceil 溢出到网格外
+        max_idx_f = torch.tensor([nx - 1, ny - 1, nz - 1], device=self.device, dtype=coords.dtype)
+        min_idx_f = torch.zeros(3, device=self.device, dtype=coords.dtype)
+        coords = torch.clamp(coords, min=min_idx_f, max=max_idx_f - 1e-6)
+
+        # 获取整数和小数部分
+        coords_floor = torch.floor(coords).long()
+        coords_frac = coords - coords_floor.float()
+
+        # 边界检查（逐维张量上下界）
+        max_idx_l = max_idx_f.long()
+        min_idx_l = torch.zeros(3, device=self.device, dtype=coords_floor.dtype)
+        coords_floor = torch.clamp(coords_floor, min=min_idx_l, max=max_idx_l)
+        coords_ceil = torch.clamp(coords_floor + 1, min=min_idx_l, max=max_idx_l)
           
         # 获取8个邻近体素的opacity值  
         x0, y0, z0 = coords_floor[:, 0], coords_floor[:, 1], coords_floor[:, 2]  
@@ -139,6 +151,24 @@ class Opacoxels:
           
         # 使用最近邻或加权平均方式更新体素  
         self._distribute_to_voxels(voxel_coords, opacities)  
+
+    def update_from_points(self, positions: torch.Tensor, opacities: torch.Tensor):
+        """
+        直接由点与其不透明度更新体素网格（无需 Gaussians 包装）。
+
+        Args:
+            positions: 世界坐标 [N, 3]
+            opacities: 不透明度 [N] 或 [N,1]
+        """
+        if positions.device.type != self.device:
+            positions = positions.to(self.device)
+        if opacities.dim() == 2 and opacities.shape[1] == 1:
+            opacities = opacities.squeeze(1)
+        if opacities.device.type != self.device:
+            opacities = opacities.to(self.device)
+
+        voxel_coords = self.world_to_voxel(positions)
+        self._distribute_to_voxels(voxel_coords, opacities)
       
     def _distribute_to_voxels(self, voxel_coords: torch.Tensor, opacities: torch.Tensor):  
         """  
@@ -148,27 +178,45 @@ class Opacoxels:
             voxel_coords: 体素坐标 [N, 3]  
             opacities: opacity值 [N]  
         """  
-        # 四舍五入到最近的体素  
-        voxel_indices = torch.round(voxel_coords).long()  
-          
-        # 边界检查  
-        nx, ny, nz = self.resolution  
-        valid_mask = (  
-            (voxel_indices[:, 0] >= 0) & (voxel_indices[:, 0] < nx) &  
-            (voxel_indices[:, 1] >= 0) & (voxel_indices[:, 1] < ny) &  
-            (voxel_indices[:, 2] >= 0) & (voxel_indices[:, 2] < nz)  
-        )  
-          
-        valid_indices = voxel_indices[valid_mask]  
-        valid_opacities = opacities[valid_mask]  
-          
-        # 更新体素网格（使用最大值或平均值）  
-        for i in range(valid_indices.shape[0]):  
-            x, y, z = valid_indices[i]  
-            self.opacity_grid[x, y, z] = torch.max(  
-                self.opacity_grid[x, y, z],   
-                valid_opacities[i]  
-            )  
+        # 近邻体素索引
+        voxel_indices = torch.round(voxel_coords).long()
+
+        # 边界裁剪
+        nx, ny, nz = self.resolution
+        valid_mask = (
+            (voxel_indices[:, 0] >= 0) & (voxel_indices[:, 0] < nx) &
+            (voxel_indices[:, 1] >= 0) & (voxel_indices[:, 1] < ny) &
+            (voxel_indices[:, 2] >= 0) & (voxel_indices[:, 2] < nz)
+        )
+        if valid_mask.sum() == 0:
+            return
+
+        voxel_indices = voxel_indices[valid_mask]
+        valid_opacities = opacities[valid_mask]
+
+        # 将三维索引展平为一维索引，便于 scatter
+        flat_indices = (
+            voxel_indices[:, 0] * (ny * nz) +
+            voxel_indices[:, 1] * nz +
+            voxel_indices[:, 2]
+        )
+
+        # 准备聚合缓冲区：sum 和 count，用于平均（比逐点 max 更稳健）
+        flat_size = nx * ny * nz
+        sum_buffer = torch.zeros(flat_size, device=self.device, dtype=self.opacity_grid.dtype)
+        cnt_buffer = torch.zeros_like(sum_buffer)
+
+        sum_buffer.index_add_(0, flat_indices, valid_opacities)
+        cnt_buffer.index_add_(0, flat_indices, torch.ones_like(valid_opacities))
+
+        # 计算平均并写回
+        avg_buffer = torch.zeros_like(sum_buffer)
+        nonzero = cnt_buffer > 0
+        avg_buffer[nonzero] = sum_buffer[nonzero] / cnt_buffer[nonzero]
+
+        avg_grid = avg_buffer.view(nx, ny, nz)
+        # 融合策略：取较大值，避免过度抹平
+        self.opacity_grid = torch.maximum(self.opacity_grid, avg_grid)
       
     def get_opacity_at_position(self, position: torch.Tensor) -> float:  
         """  
@@ -206,3 +254,51 @@ class Opacoxels:
         self.bounds = data['bounds']  
         self.resolution = data['resolution']  
         self.voxel_size = data['voxel_size']
+
+    def extract_surface(self, iso_level: float = 0.5, allow_degenerate: bool = True):
+        """
+        使用 Marching Cubes 从不透明度体素中提取等值面（世界坐标）。
+
+        Args:
+            iso_level: 提取阈值（不透明度等值）
+            allow_degenerate: 是否允许退化三角形
+
+        Returns:
+            vertices_world: (V,3) numpy 数组，世界坐标
+            faces: (F,3) numpy int32 数组
+            normals_world: (V,3) numpy 数组，世界坐标方向单位法线
+            values: (V,) numpy 数组，对应顶点的体素值
+        """
+        if not _SKIMAGE_OK:
+            raise ImportError("scikit-image 未安装，无法执行 marching cubes。请先安装: pip install scikit-image")
+
+        # skimage 假定体素排列为 (Z, Y, X)。当前 grid 为 (X, Y, Z)，需转置。
+        grid_np = self.opacity_grid.detach().clone().clamp(0.0, 1.0).cpu().numpy().transpose(2, 1, 0)
+
+        x_min, x_max, y_min, y_max, z_min, z_max = self.bounds
+        nx, ny, nz = self.resolution
+
+        # 体素间距（按索引坐标 -> 世界坐标的缩放）
+        dx = (x_max - x_min) / max(nx - 1, 1)
+        dy = (y_max - y_min) / max(ny - 1, 1)
+        dz = (z_max - z_min) / max(nz - 1, 1)
+
+        # 运行 marching cubes
+        verts, faces, normals, values = sk_measure.marching_cubes(
+            volume=grid_np,
+            level=iso_level,
+            spacing=(dz, dy, dx),  # 注意顺序与 (Z, Y, X) 对齐
+            allow_degenerate=allow_degenerate
+        )
+
+        # verts 当前在体素索引空间原点 (0,0,0) 对应世界 (z_min, y_min, x_min)，需平移到世界坐标
+        # verts 顺序为 (z, y, x)
+        x_world = x_min + verts[:, 2]
+        y_world = y_min + verts[:, 1]
+        z_world = z_min + verts[:, 0]
+        vertices_world = np.stack([x_world, y_world, z_world], axis=1)
+
+        # 法线按相同轴重排（已在 spacing 中缩放，无需再缩放，只需重排到 (x,y,z)）
+        normals_world = np.stack([normals[:, 2], normals[:, 1], normals[:, 0]], axis=1)
+
+        return vertices_world.astype(np.float32), faces.astype(np.int32), normals_world.astype(np.float32), values.astype(np.float32)

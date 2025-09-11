@@ -9,8 +9,8 @@ DataConfigs = namedtuple('DataConfigs',
                            'resolution_scale_factor',
                            'data_device'])
 
-dcs = DataConfigs(source_path="opacoxel/data",
-                  model_path="opacoxel/data/output",
+dcs = DataConfigs(source_path="Opacoxels/opacoxel/data",
+                  model_path="Opacoxels/opacoxel/data/output",
                   images_dir="images",
                   if_white_background=False,
                   if_eval=False,
@@ -36,7 +36,7 @@ OptimizationConfigs = namedtuple('OptimizationConfigs',
                                   'densification_interval',
                                   'opacity_reset_interval'])
 
-ocs = OptimizationConfigs(iterations=3000,
+ocs = OptimizationConfigs(iterations=30_000,
                           sh_degree=3,
                           position_lr_init=0.00016,
                           position_lr_final=0.0000016,
