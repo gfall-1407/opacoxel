@@ -6,30 +6,46 @@ import torch
 from random import randint
 from scene.gaussian import Gaussians
 from scene.image import rescale_image_infos
-from helpers import read_data_from_path
+from helpers import read_data_from_path, read_ply_data, save_cameras_to_json
 from utils.loss_utils import l1_loss, ssim
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
-# from PIL import Image
-# import numpy as np
-
 class Scene:
     gaussians : Gaussians
-    
-    def __init__(self, data_config: config.DataConfigs, opt_config: config.OptimizationConfigs, if_shuffle=True, resolution_scales=[1.0]):
+
+    def __init__(self, data_config: config.DataConfigs, opt_config: config.OptimizationConfigs, load_scene_iter=None, if_shuffle=True, resolution_scales=[1.0]):
+        self.model_path = data_config.model_path
+        self.load_scene_iter = None
         self.gaussians = Gaussians(opt_config)
+        self.train_images = {}
+        self.test_images = {}
+        self.viewpoint_stack = None
+        bg_color = [1, 1, 1] if data_config.if_white_background else [0, 0, 0]
+        self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        
+        if load_scene_iter is not None:
+            if load_scene_iter == -1:
+                self.load_scene_iter = max([int(fname.split("_")[-1]) for fname in os.listdir(os.path.join(self.model_path, "point_cloud"))])
+            else:
+                self.load_scene_iter = load_scene_iter
+
         scene_info = read_data_from_path(data_config.source_path, 
                                    data_config.images_dir,
                                    data_config.if_white_background, 
                                    data_config.if_eval)
-        self.scene_extent = scene_info.nerf_normalization["radius"]
-        self.viewpoint_stack = None
-        
-        self.train_images = {}
-        self.test_images = {}
+        if not self.load_scene_iter:
+            with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
+                dest_file.write(src_file.read())
+            camlist = []
+            if scene_info.test_images:
+                camlist.extend(scene_info.test_images)
+            if scene_info.train_images:
+                camlist.extend(scene_info.train_images)
+            save_cameras_to_json(os.path.join(self.model_path, "cameras.json"), camlist)
+    
         if if_shuffle:
             random.shuffle(scene_info.train_images)
-            random.shuffle(scene_info.test_images) 
+            random.shuffle(scene_info.test_images)
         for resolution_scale in resolution_scales:
             self.train_images[resolution_scale] = rescale_image_infos(scene_info.train_images, 
                                                                        resolution_scale, 
@@ -39,10 +55,16 @@ class Scene:
                                                                        resolution_scale, 
                                                                        data_config.resolution_scale_factor, 
                                                                        data_config.data_device)
-        self.gaussians.init_gaussians_with_pc(scene_info.point_cloud, self.scene_extent)
-
-        bg_color = [1, 1, 1] if data_config.if_white_background else [0, 0, 0]
-        self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        self.scene_extent = scene_info.nerf_normalization["radius"]
+            
+        if self.load_scene_iter:
+            ply_data = read_ply_data(os.path.join(self.model_path,
+                                                 "point_cloud",
+                                                "iteration_" + str(self.load_scene_iter),
+                                                "point_cloud.ply"))
+            self.gaussians.init_gaussians_with_plyfile(ply_data)
+        else:
+            self.gaussians.init_gaussians_with_pc(scene_info.point_cloud, self.scene_extent)
 
     def training_setup(self, opt_config):
         self.gaussians.training_setup(opt_config)
@@ -62,28 +84,6 @@ class Scene:
         Ll1 = l1_loss(self.render_image, gt_image)
         loss = (1.0 - opt_config.lambda_dssim) * Ll1 + opt_config.lambda_dssim * (1.0 - ssim(self.render_image, gt_image))
         loss.backward()
-
-        # if iteration == 1:
-        #      with open('opacoxel/test_output/opacoxel_viewpoint.txt', 'w', encoding='utf-8') as viewpoint_f:
-        #           pass
-        # with open('opacoxel/test_output/opacoxel_viewpoint.txt', 'a', encoding='utf-8') as viewpoint_f:
-        #     viewpoint_f.write(str(iteration) + ": " + self.viewpoint_camera.image_name + "\n")
-        #     for row in self.viewpoint_camera.R_transpose:
-        #         line = ','.join(f'{x:.4f}' for x in row)
-        #         viewpoint_f.write(line)
-        #         viewpoint_f.write('\n')
-        #     T_py = self.viewpoint_camera.T.tolist()
-        #     T_save = str(T_py) 
-        #     viewpoint_f.write(T_save) 
-        #     viewpoint_f.write('\n')
-        #     viewpoint_f.write('-----------------------\n')
-
-        # if (iteration - 1) % 1000 == 0:
-        #     image_np = self.render_image.detach().cpu().numpy()
-        #     image_np = np.transpose(image_np, (1, 2, 0))
-        #     array = np.array(image_np*255.0, dtype=np.byte)  
-        #     image = Image.fromarray(array, "RGB")  
-        #     image.save("opacoxel/test_output/output_" + str(iteration) + ".png" )
 
     def get_train_images(self, scale=1.0):
         return self.train_images[scale]

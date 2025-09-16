@@ -9,8 +9,8 @@ DataConfigs = namedtuple('DataConfigs',
                            'resolution_scale_factor',
                            'data_device'])
 
-dcs = DataConfigs(source_path="opacoxel/data",
-                  model_path="opacoxel/data/output",
+dcs = DataConfigs(source_path="data",
+                  model_path="data/output",
                   images_dir="images",
                   if_white_background=False,
                   if_eval=False,
@@ -53,3 +53,8 @@ ocs = OptimizationConfigs(iterations=30_000,
                           densify_grad_threshold=0.0002,
                           densification_interval=100,
                           opacity_reset_interval=3000)
+
+RenderConfigs = namedtuple('RenderConfigs',
+                           ['render_items'])
+
+rcs = RenderConfigs(render_items=['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature'])

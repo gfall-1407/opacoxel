@@ -439,6 +439,9 @@ def read_ply_from_file(path):
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
+def read_ply_data(path):
+    return PlyData.read(path)
+
 dataReaderTypeCallbacks = {
     "Colmap": readColmapDataInfo,
     "Blender" : readNerfSyntheticInfo

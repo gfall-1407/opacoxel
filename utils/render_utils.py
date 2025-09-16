@@ -1,0 +1,2 @@
+class GaussianRender(object):
+    pass

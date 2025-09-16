@@ -5,6 +5,8 @@ images/
 *images*/
 output/
 *output*/
+PLYs/
+*.ply
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

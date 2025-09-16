@@ -38,13 +38,6 @@ def training():
             if iteration < config.ocs.iterations:
                 scene.gaussians._optimizer.step()
                 scene.gaussians._optimizer.zero_grad(set_to_none = True)
-        
-        # if iteration == 1:
-        #     with open('opacoxel/test_output/opacoxel_point_count.txt', 'w', encoding='utf-8') as count_f:
-        #         pass
-        # with open('opacoxel/test_output/opacoxel_point_count.txt', 'a', encoding='utf-8') as count_f:
-        #     count_str = str(iteration) + " " + str(scene.gaussians.get_position.shape[0]) + '\n'
-        #     count_f.write(count_str)
     
 if __name__ == "__main__":
     print("Optimizing " + config.dcs.model_path)

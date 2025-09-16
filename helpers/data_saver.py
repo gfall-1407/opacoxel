@@ -1,8 +1,10 @@
 import os
+import json
 from errno import EEXIST
 from os import makedirs, path
 import numpy as np
 from plyfile import PlyData, PlyElement
+from utils.transform_utils import fov_to_focal
 
 def save_ply_to_file(path, xyz, rgb):
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
@@ -35,3 +37,28 @@ def mkdir_p(folder_path):
             pass
         else:
             raise
+
+def save_cameras_to_json(path, camlist):
+    json_cams = []
+    for id, camera in enumerate(camlist):
+        Rt = np.zeros((4, 4))
+        Rt[:3, :3] = camera.R.transpose()
+        Rt[:3, 3] = camera.T
+        Rt[3, 3] = 1.0
+        W2C = np.linalg.inv(Rt)
+        pos = W2C[:3, 3]
+        rot = W2C[:3, :3]
+        serializable_array_2d = [x.tolist() for x in rot]
+        camera_entry = {
+            'id' : id,
+            'img_name' : camera.image_name,
+            'width' : camera.width,
+            'height' : camera.height,
+            'position': pos.tolist(),
+            'rotation': serializable_array_2d,
+            'fy' : fov_to_focal(camera.FovY, camera.height),
+            'fx' : fov_to_focal(camera.FovX, camera.width)
+        }
+        json_cams.append(camera_entry)
+    with open(path, 'w') as file:
+        json.dump(json_cams, file)
