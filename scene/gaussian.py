@@ -52,6 +52,7 @@ class Gaussians:
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
         self._opacity = torch.empty(0)
+        self._opacity_field = None  # Optional external field providing alpha
 
         self._active_sh_degree = 0
         self._max_sh_degree = opt_config.sh_degree
@@ -91,7 +92,18 @@ class Gaussians:
     
     @property
     def get_opacity(self):
+        if self._opacity_field is not None and isinstance(self._position, torch.Tensor) and self._position.numel() > 0:
+            # Sample from field using current 3D means; returns [N,1]
+            try:
+                return self._opacity_field.sample_alpha(self._position)
+            except Exception:
+                # Fallback to internal opacity if sampling fails
+                return self._opacity_activation(self._opacity)
         return self._opacity_activation(self._opacity)
+
+    def set_opacity_field(self, field):
+        """Attach external opacity field (Opacoxel)."""
+        self._opacity_field = field
     
     @property
     def get_sh_degree(self):

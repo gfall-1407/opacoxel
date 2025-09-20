@@ -6,6 +6,7 @@ import torch
 from random import randint
 from scene.gaussian import Gaussians
 from scene.image import rescale_image_infos
+from scene.opacoxel import Opacoxel
 from helpers import read_data_from_path, read_ply_data, save_cameras_to_json
 from utils.loss_utils import l1_loss, ssim
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
@@ -66,8 +67,38 @@ class Scene:
         else:
             self.gaussians.init_gaussians_with_pc(scene_info.point_cloud, self.scene_extent)
 
+        # Initialize Opacoxel field bounds from point cloud if available
+        # Determine scene AABB from initial positions
+        with torch.no_grad():
+            if isinstance(self.gaussians.get_position, torch.Tensor) and self.gaussians.get_position.numel() > 0:
+                pts = self.gaussians.get_position.detach().cpu()
+                mins = pts.min(dim=0).values
+                maxs = pts.max(dim=0).values
+                # Pad a bit to be safe
+                pad = 0.05 * (maxs - mins).max().item() if torch.isfinite((maxs - mins).max()) else 0.1
+                bounds = (float(mins[0] - pad), float(maxs[0] + pad),
+                          float(mins[1] - pad), float(maxs[1] + pad),
+                          float(mins[2] - pad), float(maxs[2] + pad))
+            else:
+                # Fallback cube around origin
+                bounds = (-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+
+        # Create field; resolution can be tuned
+        self.opacity_field = Opacoxel(bounds=bounds, resolution=(64, 64, 64), device="cuda")
+        # Initialize field from SfM points (use gaussians init positions)
+        with torch.no_grad():
+            if isinstance(self.gaussians.get_position, torch.Tensor) and self.gaussians.get_position.numel() > 0:
+                self.opacity_field.initialize_from_point_cloud(self.gaussians.get_position.detach())
+        # Attach to gaussians, so rasterizer will use sampled alpha
+        self.gaussians.set_opacity_field(self.opacity_field)
+
     def training_setup(self, opt_config):
         self.gaussians.training_setup(opt_config)
+        # Add an optimizer for the Opacoxel logits
+        # Keep separate to manage schedulers independently
+        self.opacity_optimizer = torch.optim.Adam([
+            {"params": [self.opacity_field.logit_grid], "lr": opt_config.opacity_lr}
+        ], lr=0.0)
 
     def optimization(self, iteration, opt_config, scale=1.0):
         self.gaussians.update_learing_rate(iteration)
@@ -124,6 +155,7 @@ class Scene:
         scales = self.gaussians.get_scaling
         rotations = self.gaussians.get_rotation
         shs = self.gaussians.get_features
+        # Opacity sampled from attached field inside Gaussians.get_opacity
         opacity = self.gaussians.get_opacity
 
         rendered_image, radii = rasterizer(

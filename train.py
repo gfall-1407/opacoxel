@@ -36,8 +36,11 @@ def training():
             scene.gaussian_densify(iteration, config.dcs, config.ocs)
             
             if iteration < config.ocs.iterations:
+                # Step both optimizers: Gaussians and Opacoxel logits
                 scene.gaussians._optimizer.step()
+                scene.opacity_optimizer.step()
                 scene.gaussians._optimizer.zero_grad(set_to_none = True)
+                scene.opacity_optimizer.zero_grad(set_to_none = True)
     
 if __name__ == "__main__":
     print("Optimizing " + config.dcs.model_path)
